@@ -1,17 +1,21 @@
-#ifndef _VISUALIZATION_H
-#define _VISUALIZATION_H
+//
+// Created by ZhiangQi on 25-5-5.
+//
 
+#ifndef VISUALIZATION_H
+#define VISUALIZATION_H
 #include <Eigen/Eigen>
 #include <cmath>
-#include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs//msg/point_cloud2.h>
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/msg/marker.hpp>
 #include <cv_bridge/cv_bridge.h>
+#include <geometry_msgs/msg/point.hpp>
+#include <sensor_msgs/msg/image.hpp>
 
-#include "freedom/freedom.h"
-
+#include "FreeDOM-ROS2/freedom.h"
 namespace freedom{
 class Visualizer{
 public:
@@ -26,7 +30,7 @@ public:
 
     Visualizer(){}
 
-    void set_params(const Config& config,ros::NodeHandle& nh);
+    void set_params(const Config& config,rclcpp::Node& nh);
 
     void visualize_scan_removal_result(const ScanMap& scan);
     void visualize_raycast_enhancement_result(const DepthImage& image);
@@ -43,26 +47,26 @@ private:
     Point half_voxel_bias;
     Point half_block_bias;
 
-    ros::Publisher scan_blocks_pub;
-    ros::Publisher scan_voxels_pub;
-    ros::Publisher clusters_pub;
-    
-    ros::Publisher depth_image_pub;
-    ros::Publisher enhanced_depth_image_pub;
-    ros::Publisher enhanced_pointcloud_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_blocks_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr scan_voxels_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr clusters_pub;
 
-    ros::Publisher raycasted_blocks_pub;
-    ros::Publisher raycasted_voxels_pub;
-    ros::Publisher free_blocks_pub;
-    ros::Publisher free_voxels_pub;
-    ros::Publisher static_blocks_pub;
-    ros::Publisher static_voxels_pub;
-    ros::Publisher static_subvoxels_pub;
-    ros::Publisher static_pointcloud_pub;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_image_pub;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr enhanced_depth_image_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr enhanced_pointcloud_pub;
 
-    ros::Publisher scan_map_range_pub;
-    ros::Publisher local_map_range_pub;
-    ros::Publisher raycast_map_range_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr raycasted_blocks_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr raycasted_voxels_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr free_blocks_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr free_voxels_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_blocks_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_voxels_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_subvoxels_pub;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr static_pointcloud_pub;
+
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr scan_map_range_pub;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr local_map_range_pub;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr raycast_map_range_pub;
 
     bool enable_raycast_enhancement;
 
@@ -91,4 +95,4 @@ private:
     void visualize_raycast_map_range(const MRMap& map);
 };
 }
-#endif
+#endif //VISUALIZATION_H

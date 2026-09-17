@@ -1,206 +1,207 @@
-#include <ros/ros.h>
+#include <rclcpp/rclcpp.hpp>
 #include <Eigen/Eigen>
 #include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <tf2_ros/transform_listener.h>
-#include <geometry_msgs/TransformStamped.h>
+#include <tf2_ros/buffer.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
 #include "lidar/point_types.h"
-#include "freedom/utils.h"
-#include "freedom/common_types.h"
+#include "FreeDOM-ROS2/utils.h"
+#include "FreeDOM-ROS2/common_types.h"
 
-using namespace freedom;
+namespace freedom{
 
-bool frame_skipped;
-unsigned int last_frame;
-double voxel_size;
-double voxel_size_half;
-double voxel_size_inv;
-double min_range;
-double max_range;
-double min_range_squared;
-double max_range_squared;
-std::string map_tf_frame;
-std::string sensor_tf_frame;
-std::string pointcloud_topic;
-std::string save_map_topic;
-std::string save_map_path;
-bool enable_save_frame;
-std::string save_frame_path;
-ros::Subscriber pointcloud_sub;
-ros::Subscriber save_map_sub;
-tf2_ros::Buffer tf_buffer;
-std::unique_ptr<tf2_ros::TransformListener> tf_listener;
-std::unordered_map<Eigen::Vector3i,std::pair<Label,Eigen::Vector3d>,IndexHash> static_voxels;
-
-void pointcloud_callback(const sensor_msgs::PointCloud2ConstPtr& pointcloud)
-{
-    if(pointcloud->header.seq != last_frame + 1 && last_frame != 0)
-        frame_skipped = true;
-    
-    if(frame_skipped)
-        ROS_WARN("seq error");
-
-    //转换为PCL点云
-    pcl::PointCloud<evaluate_pcl::Point>::Ptr cloud_ptr(new pcl::PointCloud<evaluate_pcl::Point>());
-    pcl::fromROSMsg(*pointcloud, *cloud_ptr);
-    if(cloud_ptr->points.empty())
+class GroundTruthGenerate : public rclcpp::Node{
+public:
+    GroundTruthGenerate(): Node("ground_truth_generate"), frame_count_(0)
     {
-        ROS_WARN("pointcloud empty");
-        return;
+        Param param(*this);
+        param.getParam<double>("voxel_size", voxel_size_, 0.4);
+        param.getParam<double>("min_range", min_range_, 2.7);
+        param.getParam<double>("max_range", max_range_, 1000.0);
+        param.getParam<std::string>("map_tf_frame", map_tf_frame_);
+        param.getParam<std::string>("sensor_tf_frame", sensor_tf_frame_);
+        param.getParam<std::string>("pointcloud_topic", pointcloud_topic_);
+        param.getParam<std::string>("save_map_topic", save_map_topic_);
+        param.getParam<std::string>("save_map_path", save_map_path_);
+        param.getParam<bool>("enable_save_frame", enable_save_frame_, false);
+        param.getParam<std::string>("save_frame_path", save_frame_path_, std::string(""));
+
+        min_range_squared_ = min_range_ * min_range_;
+        max_range_squared_ = max_range_ * max_range_;
+        voxel_size_half_ = voxel_size_ / 2.0;
+        voxel_size_inv_ = 1.0 / voxel_size_;
+
+        tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+        tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
+        pointcloud_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+            pointcloud_topic_, rclcpp::QoS(100),
+            std::bind(&GroundTruthGenerate::pointcloud_callback, this, std::placeholders::_1));
+
+        save_map_sub_ = this->create_subscription<std_msgs::msg::Empty>(
+            save_map_topic_, 10,
+            std::bind(&GroundTruthGenerate::save_static_map_callback, this, std::placeholders::_1));
     }
 
-    ROS_INFO("lidar_transform:Pointcloud recieved,%zu points",cloud_ptr->points.size());
-
-    try{
-    //等待第一个点时刻的tf可用
-    ros::Time transform_time = pointcloud->header.stamp;
-
-    if(!tf_buffer.canTransform(map_tf_frame,sensor_tf_frame,transform_time,ros::Duration(10.0)))
+private:
+    void pointcloud_callback(const sensor_msgs::msg::PointCloud2::SharedPtr pointcloud)
     {
-        ROS_WARN("no tf");
-        return;
-    }
-
-    geometry_msgs::TransformStamped transformStamped = tf_buffer.lookupTransform(map_tf_frame,sensor_tf_frame,pointcloud->header.stamp);
-
-    Eigen::Isometry3d transform;
-    Eigen::Vector3d point_pos_transformed;
-
-    // 每帧保存点云
-    pcl::PointCloud<pcl::PointXYZ> frame_pc;
-
-    for(auto& point : *cloud_ptr)
-    {
-        assert(point.label == 9 || point.label == 251);
-        Label label = static_cast<Label>(point.label);
-
-        Eigen::Vector3d point_pos(point.x,point.y,point.z);
-
-        transformfromTFToEigen(transformStamped,transform);
-        point_pos_transformed = transform * point_pos;
-
-        double range_squared = (point_pos_transformed - transform.translation()).squaredNorm();
-
-        if( range_squared < min_range_squared || 
-            range_squared > max_range_squared)
-            continue;
-        
-        // 保存每帧点云
-        if(enable_save_frame)
+        pcl::PointCloud<evaluate_pcl::Point>::Ptr cloud_ptr(new pcl::PointCloud<evaluate_pcl::Point>());
+        pcl::fromROSMsg(*pointcloud, *cloud_ptr);
+        if(cloud_ptr->points.empty())
         {
-            pcl::PointXYZ frame_point(point_pos_transformed.x(),point_pos_transformed.y(),point_pos_transformed.z());
-            frame_pc.push_back(frame_point);
+            RCLCPP_WARN(this->get_logger(), "pointcloud empty");
+            return;
         }
 
-        Eigen::Vector3i voxel_idx( std::floor(point_pos_transformed.x()*voxel_size_inv),
-                            std::floor(point_pos_transformed.y()*voxel_size_inv),
-                            std::floor(point_pos_transformed.z()*voxel_size_inv));
-        
-        auto it = static_voxels.find(voxel_idx);
-        // voxel已经有标签，若为static则不需要处理，若为dynamic则在label为static时替换
-        if(it != static_voxels.end())
-        {
-            if(it->second.first == LABEL_DYNAMIC && label == LABEL_STATIC)
+        RCLCPP_INFO(this->get_logger(), "lidar_transform:Pointcloud recieved,%zu points", cloud_ptr->points.size());
+
+        try{
+            rclcpp::Time transform_time = pointcloud->header.stamp;
+
+            if(!tf_buffer_->canTransform(map_tf_frame_, sensor_tf_frame_, transform_time, rclcpp::Duration::from_seconds(10.0)))
             {
-                static_voxels[voxel_idx].first = label;
-                static_voxels[voxel_idx].second = Eigen::Vector3d(point_pos_transformed.x(),point_pos_transformed.y(),point_pos_transformed.z());
+                RCLCPP_WARN(this->get_logger(), "no tf");
+                return;
+            }
+
+            geometry_msgs::msg::TransformStamped transformStamped =
+                tf_buffer_->lookupTransform(map_tf_frame_, sensor_tf_frame_, transform_time);
+
+            Eigen::Isometry3d transform;
+            transformfromTFToEigen(transformStamped, transform);
+            Eigen::Vector3d point_pos_transformed;
+
+            pcl::PointCloud<pcl::PointXYZ> frame_pc;
+
+            for(auto& point : *cloud_ptr)
+            {
+                assert(point.label == 9 || point.label == 251);
+                Label label = static_cast<Label>(point.label);
+
+                Eigen::Vector3d point_pos(point.x, point.y, point.z);
+
+                point_pos_transformed = transform * point_pos;
+
+                double range_squared = (point_pos_transformed - transform.translation()).squaredNorm();
+
+                if( range_squared < min_range_squared_ ||
+                    range_squared > max_range_squared_)
+                    continue;
+
+                if(enable_save_frame_)
+                {
+                    pcl::PointXYZ frame_point(point_pos_transformed.x(), point_pos_transformed.y(), point_pos_transformed.z());
+                    frame_pc.push_back(frame_point);
+                }
+
+                Eigen::Vector3i voxel_idx( std::floor(point_pos_transformed.x()*voxel_size_inv_),
+                                    std::floor(point_pos_transformed.y()*voxel_size_inv_),
+                                    std::floor(point_pos_transformed.z()*voxel_size_inv_));
+
+                auto it = static_voxels_.find(voxel_idx);
+                if(it != static_voxels_.end())
+                {
+                    if(it->second.first == LABEL_DYNAMIC && label == LABEL_STATIC)
+                    {
+                        static_voxels_[voxel_idx].first = label;
+                        static_voxels_[voxel_idx].second = Eigen::Vector3d(point_pos_transformed.x(), point_pos_transformed.y(), point_pos_transformed.z());
+                    }
+                }
+                else
+                {
+                    static_voxels_[voxel_idx].first = label;
+                    static_voxels_[voxel_idx].second = Eigen::Vector3d(point_pos_transformed.x(), point_pos_transformed.y(), point_pos_transformed.z());
+                }
+            }
+
+            if(enable_save_frame_)
+            {
+                frame_pc.sensor_origin_ = Eigen::Vector4f(transform.translation().x(), transform.translation().y(), transform.translation().z(), 1.0);
+                pcl::io::savePCDFileASCII(save_frame_path_ + std::to_string(frame_count_) + ".pcd", frame_pc);
             }
         }
-        // voxel还没有标签，直接填充
-        else
-        {
-            static_voxels[voxel_idx].first = label;
-            static_voxels[voxel_idx].second = Eigen::Vector3d(point_pos_transformed.x(),point_pos_transformed.y(),point_pos_transformed.z());
+        catch(tf2::TransformException &ex){
+            RCLCPP_WARN(this->get_logger(), "%s", ex.what());
+            return;
         }
+
+        ++frame_count_;
     }
 
-    // 保存每帧点云
-    if(enable_save_frame)
+    void save_static_map_callback(const std_msgs::msg::Empty::SharedPtr /*msg*/)
     {
-        frame_pc.sensor_origin_ = Eigen::Vector4f(transform.translation().x(), transform.translation().y(), transform.translation().z(), 1.0);
-        pcl::io::savePCDFileASCII(save_frame_path + std::to_string(pointcloud->header.seq) + ".pcd", frame_pc);
+        pcl::PointCloud<evaluate_pcl::Point> pointcloud_point;
+        pcl::PointCloud<evaluate_pcl::Point> pointcloud_voxel;
+        pointcloud_point.reserve(static_voxels_.size());
+        pointcloud_voxel.reserve(static_voxels_.size());
+
+        for(const auto& it : static_voxels_)
+        {
+            evaluate_pcl::Point point;
+            evaluate_pcl::Point voxel_point;
+
+            point.x = it.second.second.x();
+            point.y = it.second.second.y();
+            point.z = it.second.second.z();
+            point.label = static_cast<std::uint16_t>(it.second.first);
+
+            voxel_point.x = it.first.x() * voxel_size_ + voxel_size_half_;
+            voxel_point.y = it.first.y() * voxel_size_ + voxel_size_half_;
+            voxel_point.z = it.first.z() * voxel_size_ + voxel_size_half_;
+            voxel_point.label = static_cast<std::uint16_t>(it.second.first);
+
+            pointcloud_point.push_back(point);
+            pointcloud_voxel.push_back(voxel_point);
+        }
+
+        pointcloud_point.width = pointcloud_point.points.size();
+        pointcloud_point.height = 1;
+        pcl::io::savePCDFileASCII(save_map_path_ + "ground_truth_point.pcd", pointcloud_point);
+
+        pointcloud_voxel.width = pointcloud_voxel.points.size();
+        pointcloud_voxel.height = 1;
+        pcl::io::savePCDFileASCII(save_map_path_ + "ground_truth_voxel.pcd", pointcloud_voxel);
+
+        RCLCPP_INFO(this->get_logger(), "Static map saved at:%s", save_map_path_.c_str());
     }
 
-    }
-    catch(tf2::TransformException &ex){
-        ROS_WARN("%s", ex.what());
-        return;
-    }
+    double voxel_size_;
+    double voxel_size_half_;
+    double voxel_size_inv_;
+    double min_range_;
+    double max_range_;
+    double min_range_squared_;
+    double max_range_squared_;
+    std::string map_tf_frame_;
+    std::string sensor_tf_frame_;
+    std::string pointcloud_topic_;
+    std::string save_map_topic_;
+    std::string save_map_path_;
+    bool enable_save_frame_;
+    std::string save_frame_path_;
 
-    last_frame = pointcloud->header.seq;
+    uint64_t frame_count_;
 
-    return;
-}
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pointcloud_sub_;
+    rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr save_map_sub_;
 
-void save_static_map_callback(const std_msgs::Empty::ConstPtr& msg)
-{
-    pcl::PointCloud<evaluate_pcl::Point> pointcloud_point;
-    pcl::PointCloud<evaluate_pcl::Point> pointcloud_voxel;
-    pointcloud_point.reserve(static_voxels.size());
-    pointcloud_voxel.reserve(static_voxels.size());
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
-    for(const auto& it : static_voxels)
-    {
-        evaluate_pcl::Point point;
-        evaluate_pcl::Point voxel_point;
+    std::unordered_map<Eigen::Vector3i, std::pair<Label, Eigen::Vector3d>, IndexHash> static_voxels_;
+};
 
-        point.x = it.second.second.x();
-        point.y = it.second.second.y();
-        point.z = it.second.second.z();
-        point.label = static_cast<std::uint16_t>(it.second.first);
-
-        voxel_point.x = it.first.x() * voxel_size + voxel_size_half;
-        voxel_point.y = it.first.y() * voxel_size + voxel_size_half;
-        voxel_point.z = it.first.z() * voxel_size + voxel_size_half;
-        voxel_point.label = static_cast<std::uint16_t>(it.second.first);
-
-        pointcloud_point.push_back(point);
-        pointcloud_voxel.push_back(voxel_point);
-    }
-
-    pointcloud_point.width = pointcloud_point.points.size();
-    pointcloud_point.height = 1;
-    pcl::io::savePCDFileASCII(save_map_path + "ground_truth_point.pcd", pointcloud_point);
-
-    pointcloud_voxel.width = pointcloud_voxel.points.size();
-    pointcloud_voxel.height = 1;
-    pcl::io::savePCDFileASCII(save_map_path + "ground_truth_voxel.pcd", pointcloud_voxel);
-
-    ROS_INFO("Static map saved at:%s",save_map_path.c_str());
-}
+} // namespace freedom
 
 int main(int argc, char** argv) {
-    ros::init(argc, argv, "ground_truth_generate");
-    ros::NodeHandle nh;
-
-    if(!nh.param("voxel_size",voxel_size,0.4)) ROS_ERROR("param missing:voxel_size");
-    if(!nh.param("min_range",min_range,2.7)) ROS_ERROR("param missing:min_range");
-    if(!nh.param("max_range",max_range,1000.0)) ROS_ERROR("param missing:max_range");
-    if(!nh.param("map_tf_frame",map_tf_frame,std::string(""))) ROS_ERROR("param missing:map_tf_frame");
-    if(!nh.param("sensor_tf_frame",sensor_tf_frame,std::string(""))) ROS_ERROR("param missing:sensor_tf_frame");
-    if(!nh.param("pointcloud_topic",pointcloud_topic,std::string(""))) ROS_ERROR("param missing:pointcloud_topic");
-    if(!nh.param("save_map_topic",save_map_topic,std::string(""))) ROS_ERROR("param missing:save_map_topic");
-    if(!nh.param("save_map_path",save_map_path,std::string(""))) ROS_ERROR("param missing:save_map_path");
-    if(!nh.param("enable_save_frame",enable_save_frame,false)) ROS_ERROR("param missing:enable_save_frame");
-    if(!nh.param("save_frame_path",save_frame_path,std::string(""))) ROS_ERROR("param missing:save_frame_path");
-
-    min_range_squared = min_range * min_range;
-    max_range_squared = max_range * max_range;
-
-    voxel_size_half = voxel_size/2.0;
-    voxel_size_inv = 1.0/voxel_size;
-
-    frame_skipped = false;
-    last_frame = 0;
-
-    // 初始化tf_listener
-    tf_listener.reset(new tf2_ros::TransformListener(tf_buffer));
-
-    pointcloud_sub = nh.subscribe<sensor_msgs::PointCloud2>(pointcloud_topic,100,pointcloud_callback);
-    save_map_sub = nh.subscribe(save_map_topic, 10, save_static_map_callback);
-
-    ros::spin();
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<freedom::GroundTruthGenerate>());
+    rclcpp::shutdown();
     return 0;
 }

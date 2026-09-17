@@ -1,16 +1,19 @@
-#ifndef _MRMAP_H
-#define _MRMAP_H
+//
+// Created by ZhiangQi on 25-5-5.
+//
 
+#ifndef MRMAP_H
+#define MRMAP_H
 #include <Eigen/Eigen>
 #include <cmath>
 #include <limits>
 
-#include "freedom/map.h"
-#include "freedom/scanmap.h"
-#include "freedom/utils.h"
-#include "freedom/common_types.h"
-#include "freedom/raycast.h"
-#include "freedom/depth_image.h"
+#include "FreeDOM-ROS2/map.h"
+#include "FreeDOM-ROS2/scanmap.h"
+#include "FreeDOM-ROS2/utils.h"
+#include "FreeDOM-ROS2/common_types.h"
+#include "FreeDOM-ROS2/raycast.h"
+#include "FreeDOM-ROS2/depth_image.h"
 
 namespace freedom{
 class FreeVoxel
@@ -186,7 +189,7 @@ public:
         std::vector<std::atomic<uint64_t>> trversed_voxels;
 
         //由于atomic禁止被拷贝或移动，因此trversed_voxels数量需要在构造时被确定
-        LocalRaycastBlock(const unsigned int num_uint64_voxels) : 
+        LocalRaycastBlock(const unsigned int num_uint64_voxels) :
             trversed_voxels(num_uint64_voxels){reset();}
 
         inline void reset();
@@ -200,7 +203,7 @@ public:
         std::vector<std::atomic<uint64_t>> occupancy;
 
         //由于atomic禁止被拷贝或移动，因此trversed_voxels数量需要在构造时被确定
-        LocalOccupiedBlock(const unsigned int num_uint64_voxels) : 
+        LocalOccupiedBlock(const unsigned int num_uint64_voxels) :
             occupancy(num_uint64_voxels){reset();}
 
         inline void reset();
@@ -391,4 +394,4 @@ inline StaticBlock& MRMap::getStaticBlock(const Index& block_idx)
     return static_space[block_idx];
 }
 }
-#endif
+#endif //MRMAP_H

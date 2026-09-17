@@ -1,26 +1,44 @@
-#ifndef _UTILS_H
-#define _UTILS_H
+//
+// Created by ZhiangQi on 25-5-5.
+//
 
-#include <ros/ros.h>
+#ifndef UTILS_H
+#define UTILS_H
+
+#include <rclcpp/rclcpp.hpp>
 #include <unordered_map>
+#include <sstream>
 #include <Eigen/Eigen>
-#include <geometry_msgs/TransformStamped.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
 
-#include "freedom/common_types.h"
+#include <FreeDOM-ROS2/common_types.h>
 
 namespace freedom{
 // 简化获取参数的函数
 class Param{
 public:
-    Param(ros::NodeHandle& nh): nh_(nh){}
+    Param(rclcpp::Node& node): node_(node){}
 
     template <typename T>
     // 若提供default_value，则在找不到参数时提供默认值
     void getParam(const std::string& param_name, T& param_value, const T& default_value)
     {
-        if(!nh_.param(param_name,param_value,default_value))
-            ROS_ERROR_STREAM("param missing:" << param_name << ", set default:" << default_value);
-        
+        // 使用declare_parameter确保参数已声明
+        if (!node_.has_parameter(param_name)) {
+            node_.declare_parameter(param_name, default_value);
+        }
+
+        // 获取参数
+        param_value = node_.get_parameter(param_name).get_value<T>();
+
+        // 检查是否使用了默认值
+        if (node_.get_parameter(param_name).get_value<T>() == default_value) {
+            std::ostringstream oss;
+            oss << default_value;
+            RCLCPP_WARN(node_.get_logger(), "param missing: %s, set default: %s",
+                        param_name.c_str(), oss.str().c_str());
+        }
+
         return;
     }
 
@@ -28,16 +46,24 @@ public:
     // 若不提供default_value，则在找不到参数时退出
     void getParam(const std::string& param_name, T& param_value)
     {
-        if(!nh_.param(param_name,param_value,T()))
-        {
-            ROS_ERROR_STREAM("param missing:" << param_name << ", node exit");
-            ros::shutdown();
-            std::exit(EXIT_FAILURE);
+        // 声明参数但不设置默认值
+        if (!node_.has_parameter(param_name)) {
+            node_.declare_parameter<T>(param_name);
         }
+
+        // 尝试获取参数
+        if (node_.get_parameter(param_name, param_value)) {
+            return;
+        }
+
+        // 如果获取失败
+        RCLCPP_ERROR(node_.get_logger(), "param missing: %s, node exit", param_name.c_str());
+        rclcpp::shutdown();
+        std::exit(EXIT_FAILURE);
     }
 
 private:
-    ros::NodeHandle& nh_;
+    rclcpp::Node& node_;
 };
 
 // 计时器
@@ -117,8 +143,8 @@ private:
     std::vector<TimerData> timers_;
 };
 
-// TransformStamped to Eigen
-inline void transformfromTFToEigen(const geometry_msgs::TransformStamped& transform_stamped, Eigen::Isometry3d& transform)
+// TransformStamped to Eigen - ROS2版本
+inline void transformfromTFToEigen(const geometry_msgs::msg::TransformStamped& transform_stamped, Eigen::Isometry3d& transform)
 {
     transform = Eigen::Isometry3d::Identity();
 
@@ -127,6 +153,9 @@ inline void transformfromTFToEigen(const geometry_msgs::TransformStamped& transf
 
     transform.translate(t);  // 设置平移
     transform.rotate(q);     // 设置旋转
+
+    // 或者直接使用tf2_eigen中的转换函数
+    // transform = tf2::transformToEigen(transform_stamped);
 
     return;
 }
@@ -283,28 +312,31 @@ inline void Neighbours::set_params(unsigned int connectivity)
 class ProgressBar
 {
 public:
-    ProgressBar(std::string prefix_,int bar_length_,int total_steps_,int skip_):
+    ProgressBar(std::string prefix_, int bar_length_, int total_steps_, int skip_):
         prefix(prefix_),
         bar_length(bar_length_),
         total_steps(total_steps_),
         skip(skip_),
         end(total_steps_%skip_),
         current_step(0),
-        start_time(ros::Time::now()),
-        last_print_time(ros::Time::now()){}
-    
+        start_time(rclcpp::Clock().now()),
+        last_print_time(rclcpp::Clock().now()){}
+
     inline void step()
     {
-        current_step ++;
+        current_step++;
 
         if(!time_to_print())
             return;
-        
+
         unsigned int cur_bar_length = (bar_length * current_step)/total_steps;
         std::string bar_string(cur_bar_length,'=');
         std::string empty_bar_string(bar_length - cur_bar_length,' ');
-        
-        std::cout << std::left << std::setw(12) << prefix << "[" << bar_string << ">" << empty_bar_string << "]" << (100 * current_step)/total_steps << "% " << std::fixed << std::setprecision(3) << (last_print_time - start_time).toSec() << "s\r";
+
+        double elapsed_seconds = (last_print_time - start_time).seconds();
+        std::cout << std::left << std::setw(12) << prefix << "[" << bar_string << ">" << empty_bar_string << "]"
+                 << (100 * current_step)/total_steps << "% " << std::fixed << std::setprecision(3)
+                 << elapsed_seconds << "s\r";
         std::cout.flush();
 
         if(current_step == total_steps)
@@ -313,9 +345,9 @@ public:
 
     inline bool time_to_print()
     {
-        ros::Time now = ros::Time::now();
+        rclcpp::Time now = rclcpp::Clock().now();
 
-        if(current_step%skip == end || (now - last_print_time).toSec() > 0.0333)
+        if(current_step%skip == end || (now - last_print_time).seconds() > 0.0333)
         {
             last_print_time = now;
             return true;
@@ -332,9 +364,9 @@ private:
     unsigned int skip;
     unsigned int end;
 
-    ros::Time start_time;
-    ros::Time last_print_time;
+    rclcpp::Time start_time;
+    rclcpp::Time last_print_time;
 };
 
 }
-#endif
+#endif //UTILS_H

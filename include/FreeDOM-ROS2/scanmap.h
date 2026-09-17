@@ -1,13 +1,16 @@
-#ifndef _SCANMAP_H
-#define _SCANMAP_H
+//
+// Created by ZhiangQi on 25-5-5.
+//
 
+#ifndef SCANMAP_H
+#define SCANMAP_H
 #include <pcl/point_cloud.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <atomic>
 
-#include "freedom/map.h"
-#include "freedom/utils.h"
-#include "freedom/common_types.h"
+#include <FreeDOM-ROS2/common_types.h>
+#include <FreeDOM-ROS2/map.h>
+#include <FreeDOM-ROS2/utils.h>
 
 namespace freedom{
 class ScanMap : public Map{
@@ -31,7 +34,7 @@ public:
 
         ScanVoxel() = default;
 
-        ScanVoxel(const Point& point_,const Index& voxel_idx_,const LinearIndex& local_voxel_linear_idx_) : 
+        ScanVoxel(const Point& point_,const Index& voxel_idx_,const LinearIndex& local_voxel_linear_idx_) :
             center(point_),voxel_idx(voxel_idx_),local_voxel_linear_idx(local_voxel_linear_idx_){}
 
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -48,7 +51,7 @@ public:
 
         ScanBlock() = default;
 
-        ScanBlock(const Index& block_idx_,const LinearIndex& local_block_linear_idx_) : 
+        ScanBlock(const Index& block_idx_,const LinearIndex& local_block_linear_idx_) :
             block_idx(block_idx_),local_block_linear_idx(local_block_linear_idx_){}
 
         EIGEN_MAKE_ALIGNED_OPERATOR_NEW
@@ -143,7 +146,7 @@ inline ScanMap::ScanVoxel* ScanMap::have_scan_voxel(const Index& voxel_idx)
     // 若没有points，说明没有对应scan voxel
     if(local_blocks[local_block_linear_idx].points.empty())
         return nullptr;
-    
+
     ScanBlock& scan_block = scan_blocks[local_blocks[local_block_linear_idx].scan_block_linear_idx];
     auto it = scan_block.local_voxel_linear_idx2scan_voxel_linear_idx.find(local_voxel_linear_idx);
     if(it != scan_block.local_voxel_linear_idx2scan_voxel_linear_idx.end())
@@ -152,4 +155,4 @@ inline ScanMap::ScanVoxel* ScanMap::have_scan_voxel(const Index& voxel_idx)
         return nullptr;
 }
 }
-#endif
+#endif //SCANMAP_H

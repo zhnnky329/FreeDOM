@@ -1,11 +1,14 @@
-#ifndef _MAP_H
-#define _MAP_H
+//
+// Created by ZhiangQi on 25-5-5.
+//
 
+#ifndef MAP_H
+#define MAP_H
 #include <Eigen/Eigen>
 #include <cmath>
 #include <future>
 
-#include "freedom/common_types.h"
+#include <FreeDOM-ROS2/common_types.h>
 
 namespace freedom{
 class Map{
@@ -15,7 +18,7 @@ public:
         double sub_voxel_size;
         unsigned int voxel_depth;
         unsigned int block_depth;
-        
+
         bool enable_local_map;
         double local_map_range;
         double local_map_min_z;
@@ -166,16 +169,16 @@ inline void Map::getBlockIdxFromVoxelIdx(const Index& voxel_idx, Index& block_id
 
 inline void Map::getLocalSubVoxelLinearIdxFromSubvoxelIdx(const Index& subvoxel_idx, LinearIndex& local_subvoxel_linear_idx) const
 {
-    local_subvoxel_linear_idx = ((subvoxel_idx.x() & local_subvoxel_mask) << voxel_depth_doubled) + 
-                                ((subvoxel_idx.y() & local_subvoxel_mask) << voxel_depth) + 
+    local_subvoxel_linear_idx = ((subvoxel_idx.x() & local_subvoxel_mask) << voxel_depth_doubled) +
+                                ((subvoxel_idx.y() & local_subvoxel_mask) << voxel_depth) +
                                 (subvoxel_idx.z() & local_subvoxel_mask);
 }
 
 inline void Map::getLocalVoxelLinearIdxFromVoxelIdx(const Index& voxel_idx, LinearIndex& local_voxel_linear_idx) const
 {
-    local_voxel_linear_idx =    ((voxel_idx.x() & local_voxel_mask) << voxel_to_block_depth_doubled) + 
-                                ((voxel_idx.y() & local_voxel_mask) << voxel_to_block_depth) + 
+    local_voxel_linear_idx =    ((voxel_idx.x() & local_voxel_mask) << voxel_to_block_depth_doubled) +
+                                ((voxel_idx.y() & local_voxel_mask) << voxel_to_block_depth) +
                                 (voxel_idx.z() & local_voxel_mask);
 }
 }
-#endif
+#endif //MAP_H
